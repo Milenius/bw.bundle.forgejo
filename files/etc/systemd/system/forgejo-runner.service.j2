@@ -1,0 +1,22 @@
+# Managed by bundlewrap (bundles/forgejo). Upstream contrib/forgejo-runner.service.
+[Unit]
+Description=Forgejo Runner
+Documentation=https://forgejo.org/docs/latest/admin/actions/
+After=docker.service
+# bundlewrap: stay quiet until registered by hand, see README
+ConditionPathExists={{ home }}/.runner
+
+[Service]
+ExecStart=/usr/local/bin/forgejo-runner daemon -c /etc/forgejo-runner/config.yaml
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# This user and working directory must already exist
+User=runner
+WorkingDirectory={{ home }}
+Restart=on-failure
+# allow configured shutdown_timeout to be effective, rather than overridden by systemd
+TimeoutStopSec=infinity
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
