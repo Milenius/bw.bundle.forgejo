@@ -73,7 +73,10 @@ runner:
   #       backend-options:
   #         image: ghcr.io/freebsd/freebsd-runtime:15.0
   #         platform: freebsd/amd64
-  labels: []
+  labels:
+{% for label in cfg.labels %}
+    - "{{ label }}"
+{% endfor %}
 
 cache:
   #
@@ -267,3 +270,13 @@ server:
   # `runner.fetch_interval` is used. Note that Forgejo Runner might enforce a
   # minimum value for certain instances like Codeberg.
   connections:
+{% for name, conn in cfg.connections.items() %}
+    {{ name }}:
+      url: {{ conn.url }}
+      uuid: {{ conn.uuid }}
+{% if conn.token_url is defined %}
+      token_url: {{ conn.token_url }}
+{% else %}
+      token: {{ conn.token }}
+{% endif %}
+{% endfor %}

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Managed by bundlewrap (bundles/forgejo, role "pull").
+#
+# Called by the `webhook` daemon for Forgejo org webhooks (HMAC already verified):
+#   forgejo-pull-hook <event type> <event> <json payload>
+# (Forgejo sends the event name in X-Forgejo-Event-Type; X-Forgejo-Event may be empty.)
+# Starts the forgejo-pull unit of the target whose PACKAGE (package event) or
+# REPO (action_run_success event) matches. Unknown names are ignored, so the
+# webhook can only ever start jobs this host already knows.
+set -euo pipefail
+
+event="${1:-${2:-}}"; payload="${3:-{\}}"
+case "${event}" in
+    package)             key="PACKAGE=$(jq -r '.package.name // empty' <<<"${payload}")" ;;
+    action_run_success)  key="REPO=$(jq -r '.run.repository.name // empty' <<<"${payload}")" ;;
+    *)                   echo "ignoring event '${event}'"; exit 0 ;;
+esac
+
+for env in /etc/forgejo-pull/*.env; do
+    name=$(basename "${env}" .env)
+    [[ "${name}" == "forgejo" ]] && continue
+    if grep -qxF "${key}" "${env}"; then
+        systemctl start --no-block "forgejo-pull@${name}.service"
+        echo "triggered ${name} (${event})"
+    fi
+done

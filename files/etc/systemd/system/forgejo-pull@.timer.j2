@@ -1,0 +1,12 @@
+# Managed by bundlewrap (bundles/forgejo, role "pull").
+[Unit]
+Description=Pull latest artifact for %i from Forgejo
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={{ interval }}
+RandomizedDelaySec=20s
+Unit=forgejo-pull@%i.service
+
+[Install]
+WantedBy=timers.target

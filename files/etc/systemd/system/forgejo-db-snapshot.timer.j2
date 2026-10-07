@@ -1,0 +1,10 @@
+# Managed by bundlewrap (bundles/forgejo, role "server").
+[Unit]
+Description=Snapshot Forgejo's SQLite database for backup
+
+[Timer]
+OnCalendar={{ time }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

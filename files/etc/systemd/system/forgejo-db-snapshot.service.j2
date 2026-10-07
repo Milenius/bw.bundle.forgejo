@@ -1,0 +1,12 @@
+# Managed by bundlewrap (bundles/forgejo, role "server").
+# Consistent copy of the SQLite database for the nightly backup. A plain file copy
+# of a WAL-mode database taken while Forgejo writes can be corrupt; sqlite's
+# online backup is not.
+[Unit]
+Description=Snapshot Forgejo's SQLite database for backup
+
+[Service]
+Type=oneshot
+User=git
+Group=git
+ExecStart=/usr/bin/sqlite3 {{ home }}/data/forgejo.db ".backup '{{ home }}/data/forgejo.db.snapshot'"

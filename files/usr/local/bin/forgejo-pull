@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Managed by bundlewrap (bundles/forgejo, role "pull").
+#
+# Keeps one deploy target in sync with Forgejo. Called by
+# forgejo-pull@<target>.timer with /etc/forgejo-pull/<target>.env:
+#
+#   TYPE=static  PACKAGE=<generic package>  DEST=/var/www/<site>
+#       newest package version is verified and rsynced into DEST
+#   TYPE=git     REPO=<repo name>  DIR=/var/www/<checkout>  BRANCH=master
+#                COMPOSE=true|false  REQUIRE_CI=true|false
+#       checkout is moved to the branch head in Forgejo (only if CI is green when
+#       REQUIRE_CI), then `docker compose up -d --build`. Untracked files such as
+#       data directories are never touched: no `git clean`, ever.
+#
+# plus FORGEJO_URL, FORGEJO_OWNER, FORGEJO_TOKEN (read-only) from the shared
+# /etc/forgejo-pull/forgejo.env. STATE_DIR holds the deployed version per target.
+set -euo pipefail
+
+api() { curl -sSf -H "Authorization: token ${FORGEJO_TOKEN}" "$@"; }
+
+case "${TYPE}" in
+
+static)
+    state="${STATE_DIR}/${PACKAGE}.version"
+    # newest version of the generic package = last successful CI run
+    version=$(api "${FORGEJO_URL}/api/v1/packages/${FORGEJO_OWNER}?type=generic&q=${PACKAGE}&limit=50" \
+        | jq -r --arg p "${PACKAGE}" '[.[] | select(.name == $p)] | sort_by(.created_at) | last | .version // empty')
+    [[ -n "${version}" ]] || { echo "no package ${PACKAGE} found"; exit 0; }
+    [[ "$(cat "${state}" 2>/dev/null)" == "${version}" ]] && exit 0   # already deployed
+
+    file=$(api "${FORGEJO_URL}/api/v1/packages/${FORGEJO_OWNER}/generic/${PACKAGE}/${version}/files")
+    name=$(jq -r '.[0].name' <<<"${file}")
+    sha=$(jq -r '.[0].sha256' <<<"${file}")
+
+    tmp=$(mktemp -d); trap 'rm -rf "${tmp}"' EXIT
+    api -o "${tmp}/${name}" "${FORGEJO_URL}/api/packages/${FORGEJO_OWNER}/generic/${PACKAGE}/${version}/${name}"
+    echo "${sha}  ${tmp}/${name}" | sha256sum -c --quiet
+    mkdir "${tmp}/site"
+    tar -xzf "${tmp}/${name}" -C "${tmp}/site" --no-same-owner --no-same-permissions
+    [[ -f "${tmp}/site/index.html" ]] || { echo "artifact ${version} has no index.html, refusing"; exit 1; }
+
+    rsync -rlt --delete-after "${tmp}/site/" "${DEST}/"   # no owner/group/perm sync: we are not root
+    echo "${version}" > "${state}"
+    echo "deployed ${PACKAGE} ${version}"
+    ;;
+
+git)
+    cd "${DIR}"
+    branch="${BRANCH:-master}"
+    repo="${FORGEJO_URL}/${FORGEJO_OWNER}/${REPO}.git"
+
+    # fetch the mirror; the token goes through a credential helper, not the command line
+    git -c credential.helper='!f() { echo "username=token"; echo "password=${FORGEJO_TOKEN}"; }; f' \
+        fetch --quiet "${repo}" "refs/heads/${branch}"
+    want=$(git rev-parse FETCH_HEAD)
+    have=$(git rev-parse HEAD)
+    [[ "${want}" == "${have}" ]] && exit 0   # already deployed
+
+    if [[ "${REQUIRE_CI:-false}" == "true" ]]; then
+        # Latest run of every workflow for this commit must be green. (Commit statuses
+        # would miss manually started runs; Forgejo records them only for push events.)
+        verdict=$(api "${FORGEJO_URL}/api/v1/repos/${FORGEJO_OWNER}/${REPO}/actions/runs?head_sha=${want}&limit=50" \
+            | jq -r '[.workflow_runs[]?] | if length == 0 then "no runs yet"
+                     else (group_by(.workflow_id) | map(max_by(.id) | .status)
+                           | if all(. == "success") then "success" else join(",") end) end')
+        [[ "${verdict}" == "success" ]] || { echo "${want:0:10}: CI is '${verdict}', waiting"; exit 0; }
+    fi
+
+    # never overwrite hand-made changes on the host; fix them in git or revert them by hand
+    if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+        echo "${DIR} has local modifications to tracked files, refusing to deploy" >&2
+        git status --short --untracked-files=no >&2
+        exit 1
+    fi
+
+    git reset --quiet --hard FETCH_HEAD        # tracked files only; pb_data & co stay untouched
+    if [[ "${COMPOSE:-false}" == "true" ]]; then
+        docker compose up -d --build --remove-orphans --quiet-pull
+    fi
+    echo "deployed ${REPO} ${have:0:10} -> ${want:0:10}"
+    ;;
+
+*)  echo "unknown TYPE ${TYPE}"; exit 1 ;;
+esac

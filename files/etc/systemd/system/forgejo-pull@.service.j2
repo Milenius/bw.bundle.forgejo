@@ -1,0 +1,10 @@
+# Managed by bundlewrap (bundles/forgejo, role "pull").
+[Unit]
+Description=Pull latest artifact for %i from Forgejo
+
+[Service]
+Type=oneshot
+User={{ user }}
+EnvironmentFile=/etc/forgejo-pull/forgejo.env
+EnvironmentFile=/etc/forgejo-pull/%i.env
+ExecStart=/usr/local/bin/forgejo-pull

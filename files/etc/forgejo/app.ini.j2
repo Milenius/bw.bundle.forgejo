@@ -1039,7 +1039,7 @@ REQUIRE_SIGNIN_VIEW = true
 ;;
 ;; Comma separated list of default mirror repo units.
 ;; The set of allowed values and rules are the same as DEFAULT_REPO_UNITS.
-;DEFAULT_MIRROR_REPO_UNITS = repo.code,repo.releases,repo.issues,repo.wiki,repo.projects,repo.packages
+DEFAULT_MIRROR_REPO_UNITS = repo.code,repo.releases,repo.actions
 ;;
 ;; Prefix archive files by placing them in a directory named after the repository
 ;PREFIX_ARCHIVE_FILES = true
@@ -1681,7 +1681,7 @@ ENABLE_AUTO_REGISTRATION = true
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;[webhook]
+[webhook]
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
@@ -1696,7 +1696,7 @@ ENABLE_AUTO_REGISTRATION = true
 ;; CIDR list: 1.2.3.0/8, 2001:db8::/32
 ;; Wildcard hosts: *.mydomain.com, 192.168.100.*
 ;; Since 1.15.7. Default to * for 1.15.x, external for 1.16 and later
-;ALLOWED_HOST_LIST = external
+ALLOWED_HOST_LIST = {{ cfg.webhook_allowed_hosts }}
 ;;
 ;; Allow insecure certification
 ;SKIP_TLS_VERIFY = false
