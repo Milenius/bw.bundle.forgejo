@@ -36,7 +36,8 @@ defaults = {
             # the job thrashes at the limit instead of failing.
             'container_options': '--security-opt=no-new-privileges --memory=6g --pids-limit=1024',
             # Jobs run in containers only; the image is the default for `runs-on: docker`.
-            'labels': ['docker:docker://docker.io/library/debian:bookworm'],
+            # Needs node: the standard actions (checkout etc.) are JavaScript.
+            'labels': ['docker:docker://docker.io/library/node:22-bookworm'],
             # Required in the node. One entry per Forgejo instance; uuid and token come
             # from "Create new runner" in Forgejo (Site Administration -> Actions -> Runners):
             # {'gipsburg': {'url': 'https://...', 'uuid': '...', 'token': vault.decrypt('...').value}}
@@ -60,7 +61,8 @@ defaults = {
                 'from_node': None,
                 'from': None,
             },
-            # 'static': newest generic package <package> is rsynced into <dest> (the site dir)
+            # 'static': newest generic package <package> is unpacked into <dest>/releases/<version>
+            #           and <dest>/current is switched atomically; set the nginx root to <dest>/current
             #   {'doku': {'type': 'static', 'package': 'doku.intern.gipsburg.de', 'dest': '/var/www/doku.intern.gipsburg.de'}}
             # 'git':    checkout <dir> follows <repo>'s <branch> in Forgejo (only CI-green commits
             #           when require_ci), then docker compose up -d --build if compose; needs user root.

@@ -69,8 +69,14 @@ target and fetches from Forgejo with a read-only token. CI never touches hosts.
 A daily timer is the fallback for missed webhook deliveries (`fallback_timer`, `interval`).
 
 - `static`: newest version of a generic package (published by the shared `publish-site`
-  action) is checksum-verified and rsynced into the site directory.
-  Rollback: delete the bad package version in Forgejo.
+  action) is checksum-verified, unpacked into `<dest>/releases/<version>/` and
+  `<dest>/current` is switched to it with one rename, so every request sees either the
+  old or the new site. The newest three releases are kept. **The nginx `root` must be
+  `<dest>/current`.** bundlewrap bootstraps `current -> .` (still serving files already
+  in `<dest>`); the first deploy switches it to a release, after which old top-level
+  files in `<dest>` are no longer served and can be deleted at leisure.
+  Rollback: `ln -sfn releases/<older version> <dest>/current` on the host, or delete
+  the bad package version in Forgejo and run the pull again.
 - `git`: a checkout follows a branch of the repo's Forgejo mirror. With `require_ci` a
   commit is only deployed once the latest run of every workflow for it is `success`, so a
   test-build workflow gates the deploy (manual re-runs count). The pull user's org team

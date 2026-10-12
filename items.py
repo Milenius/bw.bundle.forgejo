@@ -272,6 +272,17 @@ if 'pull' in roles:
                 'needs': user_needs,
                 'needed_by': [f'svc_systemd:forgejo-pull@{name}.timer'],
             }
+            # Atomic deploys: nginx serves <dest>/current, the puller switches that symlink.
+            current = f'{target["dest"]}/current'
+            nginx_roots = {v.get('root') for v in node.metadata.get('nginx/sites', {}).values()}
+            actions[f'forgejo_pull_bootstrap_{name}'] = {
+                'command': f'install -d -o {puser} -g {puser} -m 0755 {target["dest"]}/releases '
+                           f'&& ln -s . {current} && chown -h {puser}:{puser} {current}',
+                'unless': f'test -L {current}',
+                'needs': [f'action:forgejo_pull_own_{name}'],
+                'needed_by': [f'svc_systemd:forgejo-pull@{name}.timer']
+                             + ([f'directory:{current}'] if current in nginx_roots else []),
+            }
         elif target['type'] == 'git':
             env.update(
                 REPO=target['repo'],

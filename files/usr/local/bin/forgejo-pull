@@ -5,7 +5,9 @@
 # forgejo-pull@<target>.timer with /etc/forgejo-pull/<target>.env:
 #
 #   TYPE=static  PACKAGE=<generic package>  DEST=/var/www/<site>
-#       newest package version is verified and rsynced into DEST
+#       newest package version is verified, unpacked into DEST/releases/<version>
+#       and DEST/current is switched to it atomically (nginx root = DEST/current).
+#       The newest three releases are kept.
 #   TYPE=git     REPO=<repo name>  DIR=/var/www/<checkout>  BRANCH=master
 #                COMPOSE=true|false  REQUIRE_CI=true|false
 #       checkout is moved to the branch head in Forgejo (only if CI is green when
@@ -17,31 +19,69 @@
 set -euo pipefail
 
 api() { curl -sSf -H "Authorization: token ${FORGEJO_TOKEN}" "$@"; }
+die() { echo "$*" >&2; exit 1; }
+
+# Version names come from the package registry, which every workflow in the org can
+# write to. Only the formats produced by the shared publish-site action are accepted
+# (<UTC timestamp>-<short sha>, or a full sha from before 2026-10); nothing else is
+# ever used to build a path.
+VERSION_RE='^([0-9]{14}-[0-9a-f]{8}|[0-9a-f]{40})$'
 
 case "${TYPE}" in
 
 static)
+    # inputs from the root-owned env file (bundlewrap); checked anyway against typos
+    [[ "${DEST}" =~ ^/var/www/[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || die "DEST '${DEST}' is not /var/www/<name>, refusing"
+    [[ "${PACKAGE}" =~ ^[A-Za-z0-9_-][A-Za-z0-9._+-]*$ ]]      || die "PACKAGE '${PACKAGE}' has unexpected characters, refusing"
     state="${STATE_DIR}/${PACKAGE}.version"
+
     # newest version of the generic package = last successful CI run
     version=$(api "${FORGEJO_URL}/api/v1/packages/${FORGEJO_OWNER}?type=generic&q=${PACKAGE}&limit=50" \
         | jq -r --arg p "${PACKAGE}" '[.[] | select(.name == $p)] | sort_by(.created_at) | last | .version // empty')
     [[ -n "${version}" ]] || { echo "no package ${PACKAGE} found"; exit 0; }
+    [[ "${version}" =~ ${VERSION_RE} ]] || die "unexpected version '${version}' in the registry, refusing"
     [[ "$(cat "${state}" 2>/dev/null)" == "${version}" ]] && exit 0   # already deployed
 
     file=$(api "${FORGEJO_URL}/api/v1/packages/${FORGEJO_OWNER}/generic/${PACKAGE}/${version}/files")
     name=$(jq -r '.[0].name' <<<"${file}")
     sha=$(jq -r '.[0].sha256' <<<"${file}")
+    [[ "${name}" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || die "unexpected file name '${name}', refusing"
+    [[ "${sha}" =~ ^[0-9a-f]{64}$ ]]                 || die "unexpected checksum '${sha}', refusing"
 
-    tmp=$(mktemp -d); trap 'rm -rf "${tmp}"' EXIT
+    # bundlewrap creates DEST/current (bootstrap: `current -> .`); never touch anything else
+    link="${DEST}/current"
+    [[ -L "${link}" ]] || die "${link} is not a symlink, refusing (bootstrap missing?)"
+
+    tmp=$(mktemp -d); trap 'rm -rf -- "${tmp}"' EXIT
     api -o "${tmp}/${name}" "${FORGEJO_URL}/api/packages/${FORGEJO_OWNER}/generic/${PACKAGE}/${version}/${name}"
     echo "${sha}  ${tmp}/${name}" | sha256sum -c --quiet
-    mkdir "${tmp}/site"
-    tar -xzf "${tmp}/${name}" -C "${tmp}/site" --no-same-owner --no-same-permissions
-    [[ -f "${tmp}/site/index.html" ]] || { echo "artifact ${version} has no index.html, refusing"; exit 1; }
 
-    rsync -rlt --delete-after "${tmp}/site/" "${DEST}/"   # no owner/group/perm sync: we are not root
+    # unpack next to the live release, so the switch below is a rename on one filesystem.
+    # Versions are unique; an existing directory means something unexpected happened.
+    release="${DEST}/releases/${version}"
+    mkdir -- "${release}" || die "${release} already exists, refusing"
+    tar -xzf "${tmp}/${name}" -C "${release}" --no-same-owner --no-same-permissions
+
+    # A site is plain files and directories. Symlinks (e.g. index.html -> /etc/passwd,
+    # which nginx would follow) or device files are refused.
+    if [[ -n "$(find "${release}" ! -type f ! -type d -print -quit)" ]]; then
+        rm -rf -- "${release}"; die "artifact ${version} contains symlinks or special files, refusing"
+    fi
+    [[ -f "${release}/index.html" ]] || { rm -rf -- "${release}"; die "artifact ${version} has no index.html, refusing"; }
+
+    ln -sfn "releases/${version}" "${DEST}/.current.tmp"
+    mv -T -- "${DEST}/.current.tmp" "${link}"   # atomic: requests see the old or the new release
     echo "${version}" > "${state}"
     echo "deployed ${PACKAGE} ${version}"
+
+    # keep the newest three releases; only directories named exactly like a version,
+    # directly in releases/, and never the one just deployed
+    find "${DEST}/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
+        | sort -rn | tail -n +4 | cut -d' ' -f2- \
+        | while read -r old; do
+              [[ "${old}" =~ ${VERSION_RE} && "${old}" != "${version}" ]] || continue
+              rm -rf -- "${DEST}/releases/${old}"
+          done
     ;;
 
 git)
